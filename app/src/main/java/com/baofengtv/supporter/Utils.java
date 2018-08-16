@@ -277,7 +277,7 @@ public class Utils {
             return sysVer;
         sysVer = BFTVCommonManager.getInstance(context).getVersion();
         Trace.Debug("###software version = " + sysVer);
-        return TextUtils.isEmpty(sysVer) ? "":sysVer;
+        return TextUtils.isEmpty(sysVer) ? "unknown":sysVer;
     }
 
     private static String mac = null;

@@ -65,8 +65,29 @@
                 <action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED"/>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"/>
                 <action android:name="android.bluetooth.input.profile.action.CONNECTION_STATE_CHANGED"/>
+                <action android:name="baofengtv.action.NO_OPERATION_START_APP"/>
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".game.GameInstallChangedReceiver">
+            <intent-filter>
+                <action android:name="com.egame.tv.CHANGE_INSTALLED_APP"/>
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".game.GameUninstallReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_REMOVED"/>
+                <data android:scheme="PACKAGE_NAME"/>
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+        <provider
+            android:name=".database.MyContentProvider"
+            android:authorities="com.baofengtv.supporter.provider"
+            android:exported="true" >
+        </provider>
 
         <!--<meta-data
             android:name="UMENG_APPKEY"

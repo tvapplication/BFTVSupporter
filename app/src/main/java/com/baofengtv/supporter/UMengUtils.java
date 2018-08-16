@@ -8,18 +8,18 @@ package com.baofengtv.supporter;
  */
 public class UMengUtils {
     //海报下载结果
-    //public static final String EVENT_DOWNLOAD_RESULT = "download_result";
+    public static final String EVENT_DOWNLOAD_RESULT = "download_result";
 
     //请求url结果
     public static final String EVENT_REQUEST_RESULT = "request_result";
 
-    //public static final String EVENT_RENAME_RESULT = "rename_result";
+    public static final String EVENT_RENAME_RESULT = "rename_result";
 
     public static final String EVENT_INPUT_SOURCE_JUMP = "input_source_jump";
 
-    //public static final String EVENT_MD5_DISMATCH = "md5_dismatch";
+    public static final String EVENT_MD5_DISMATCH = "md5_dismatch";
 
-    //public static final String EVENT_UPLOAD_LOG = "upload_log";
+    public static final String EVENT_UPLOAD_LOG = "upload_log";
 
     public static final String PRELOAD_AD_RESULT = "preload_ad_result";
 
@@ -39,10 +39,14 @@ public class UMengUtils {
     //每次开机统计是否连接遥控器
     public static final String EVENT_STATUS_BLUETOOTH_REMOTE = "status_bluetooth_remote";
 
-    public static final String EVENT_STATUS_WIFI = "status_wifi";
+    public static final String EVENT_STATUS_WIFI = "status_wifi_v2";
 
     public static  final String KEY_EVENT = "key_event";
 
     //系统包信息
     public static final String EVENT_ROM_INFO = "rom_info";
+    //测速
+    public static final String EVENT_NETWORK_SPEED = "network_speed";
+    //ping
+    public static final String EVENT_PING = "ping";
 }

@@ -17,8 +17,8 @@ android {
         applicationId "com.baofengtv.supporter"
         minSdkVersion 16
         targetSdkVersion 21
-        versionCode 265
-        versionName "2.3"
+        versionCode 269
+        versionName "2.6"
         signingConfig signingConfigs.myConfig
     }
     buildTypes {
@@ -36,9 +36,18 @@ android {
             debuggable true
             signingConfig signingConfigs.myConfig
 
+//            applicationVariants.all { variant ->
+//                variant.outputs.each { output ->
+//                    def outputFile = output.outputFile
+//                    if (outputFile != null && outputFile.name.endsWith('.apk')) {
+//                        def fileName = "BFTVSupporter-v${defaultConfig.versionName}.${defaultConfig.versionCode}.apk"
+//                        output.outputFile = new File(outputFile.parent, fileName)
+//                    }
+//                }
+//            }
             android.applicationVariants.all { variant ->
                 variant.outputs.all {
-                    outputFileName = "BFTVSupporter-v${defaultConfig.versionName}.${defaultConfig.versionCode}.apk"
+                    outputFileName = "BFTVSupporter-common-v${defaultConfig.versionName}.${defaultConfig.versionCode}.apk"
                 }
             }
         }

@@ -15,22 +15,22 @@ public class Constant {
     //public static String SCREEN_SAVE_DIR = "/data/misc/baofengtv/screensaver/";
     public static String HOUYI_AD_DIR = "/data/misc/baofengtv/houyi_ad/";
 
+    public static final String LAUNCHER_10_PACKAGE = "com.baofengtv.launcher3d";
+
     //海报下载地址
-    //public static String BFTV_BASE_URL = "http://ptbftv.gitv.tv";//"http://bftvapi.riverrun.cn";//
+    public static String BFTV_BASE_URL = "http://ptbftv.gitv.tv";//"http://bftvapi.riverrun.cn";//
     //测试地址
-    //public static final String BFTV_BASE_TEST_URL = "http://bftvapi.riverrun.cn";
+    public static final String BFTV_BASE_TEST_URL = "http://bftvapi.riverrun.cn";
 
     //获取爱游戏推荐游戏列表的地址
-    //public static final String GAME_RECOMMEND_URL =
-    //        "http://open.play.cn/api/v2/tv/eoi/show_advt.json?fromer=bfGame";
-
+    public static final String GAME_RECOMMEND_URL =
+            "http://open.play.cn/api/v2/tv/eoi/show_advt.json?fromer=bfGame";
     public static final String UPLOAD_LOG_URL = "http://bfm.fengmi.tv/bfm/logquery/receiveFile.ajax";
-
     //游戏apk发生安装/卸载后发广播
-    //public static final String BROADCAST_GAMEINFO = "baofengtv.supporter.action.GAME_INFO";
+    public static final String BROADCAST_GAMEINFO = "baofengtv.supporter.action.GAME_INFO";
 
     //所有海报下载完毕发广播
-    //public static final String BROADCAST_POSTERS_FINISHED = "baofengtv.supporter.action.POSTER_FINISHED";
+    public static final String BROADCAST_POSTERS_FINISHED = "baofengtv.supporter.action.POSTER_FINISHED";
 
     //开机广告位
     public static final String HOUYI_AD_BOOT = "293400472202";  //小魔投开机广告位894347409981
@@ -90,7 +90,14 @@ public class Constant {
         }
         HOUYI_AD_DIR = dir.getAbsolutePath() + "/";
     }
-/*
+
+    public static void setTestServer(boolean isTest){
+        if(isTest){
+            BFTV_BASE_URL = BFTV_BASE_TEST_URL;
+        }
+        Trace.Debug("###BFTV_BASE_URL=" + BFTV_BASE_URL);
+    }
+
     public static final int ID_INVALID = -1;
 
     //==========don't change these values==========//
@@ -230,5 +237,5 @@ public class Constant {
     public static final int ID_SPORT = 1500;
     public static final int ID_SPORT_SUB1 = 1510;
     public static final int ID_SPORT_SUB2 = 1520;
-*/
+
 }

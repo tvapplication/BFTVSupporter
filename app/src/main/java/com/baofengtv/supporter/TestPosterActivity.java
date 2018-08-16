@@ -14,6 +14,7 @@ import android.widget.Button;
 
 import com.baofengtv.supporter.autorun.AutoRunBusiness;
 import com.baofengtv.supporter.bootanim.BootAnimBusiness;
+import com.baofengtv.supporter.bftv.BftvBusiness;
 import com.baofengtv.supporter.houyi_ad.HouyiAdBusiness;
 
 import java.io.BufferedReader;
@@ -96,12 +97,12 @@ public class TestPosterActivity extends Activity implements View.OnClickListener
     public void onClick(View v) {
         switch (v.getId()) {
             case R.id.get_main_poster:
-//                final Runnable task = BftvBusiness.getInstance(getApplicationContext()).getTaskRunnable();
-//                new Thread(){
-//                    public void run(){
-//                        task.run();
-//                    }
-//                }.start();
+                final Runnable task = BftvBusiness.getInstance(getApplicationContext()).getTaskRunnable();
+                new Thread(){
+                    public void run(){
+                        task.run();
+                    }
+                }.start();
 
                 //startActivityByJson("json_readtv_sub2.txt");
                 //startActivityByJson("json_shiyun_sport_sub2.txt");

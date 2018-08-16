@@ -3,16 +3,24 @@ package com.baofengtv.supporter;
 import android.app.Notification;
 import android.app.Service;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.ServiceConnection;
+import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.net.ConnectivityManager;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.RemoteException;
 import android.provider.Settings;
 import android.text.TextUtils;
 
@@ -21,26 +29,40 @@ import com.baofengtv.middleware.tv.BFTVCommonManager;
 import com.baofengtv.middleware.tv.BFTVFactoryManager;
 import com.baofengtv.middleware.tv.BFTVTVManager;
 import com.baofengtv.supporter.autorun.AutoRunBusiness;
+import com.baofengtv.supporter.bftv.BftvBusiness;
 import com.baofengtv.supporter.bootanim.BootAnimBusiness;
+import com.baofengtv.supporter.database.ContentManager;
+import com.baofengtv.supporter.game.GameBusiness;
 import com.baofengtv.supporter.houyi_ad.HouyiAdBusiness;
+import com.egame.tv.services.aidl.EgameInstallAppBean;
+import com.egame.tv.services.aidl.IEgameService;
 import com.umeng.analytics.MobclickAgent;
 import com.umeng.commonsdk.UMConfigure;
 
 import java.io.File;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 
 /**
  * @author
  * @version v1.0
- * @brief
+ * @brief 后台执行网络海报下载的Service，执行各SubBusiness的任务
+ *          下载成功后将业务id、url、本地文件的存储路径存到数据库，供launcher查询使用
  * @date 2015/8/2
  */
 public class SlaveService extends Service {
 
     //通知下载海报消息
     private static final int MSG_DOWNLOAD_POSTERS = 1;
+    //海报下载完毕后发送广播的消息
+    private static final int MSG_POSTERS_FINISHED = 2;
     //注册接收信源事件
     private static final int MSG_REGISTER_INPUT_SOURCE = 3;
+    //爱游戏的远程service
+    private IEgameService mGameService;
 
     private static SlaveService sInstance;
 
@@ -56,6 +78,8 @@ public class SlaveService extends Service {
     private static long sStrPowerOnTime = 0L;
 
     private static boolean sInitFlag =false;
+
+    private int mFUIVersion = 1;
 
     //STR待机开关广播
     private BroadcastReceiver mPowerReceiver = new BroadcastReceiver() {
@@ -89,8 +113,6 @@ public class SlaveService extends Service {
                 if(Utils.isConnected(SlaveService.this.getApplicationContext())){
                     Trace.Debug("###start to download posters now!");
                     performDownloadPosters();
-                    //如有必要则解绑广播
-                    SupporterReceiver.reportWifi(getApplicationContext());
                     if(mNetworkReceiver != null){
                         unregisterReceiver(mNetworkReceiver);
                         mNetworkReceiver = null;
@@ -99,6 +121,9 @@ public class SlaveService extends Service {
                     Trace.Warn("###network is disable");
                     registerNetworkReceiver();
                 }
+            }else if(msg.what == MSG_POSTERS_FINISHED){
+                    Intent intent = new Intent(Constant.BROADCAST_POSTERS_FINISHED);
+                    SlaveService.this.getApplicationContext().sendBroadcast(intent);
             }else if(msg.what == MSG_REGISTER_INPUT_SOURCE){
                 //一连即播功能
                 if(mInputSourceConnHandler == null){
@@ -118,7 +143,7 @@ public class SlaveService extends Service {
         Trace.Debug("###onBind()");
         sInstance = this;
 
-        return null;
+        return mBinder;
     }
 
     @Override
@@ -127,6 +152,8 @@ public class SlaveService extends Service {
         super.onCreate();
         MobclickAgent.onResume(this);
 
+        mFUIVersion = Utils.getFUIVersion(this);
+        Trace.Debug("sInitFlag = " + sInitFlag);
         if(!sInitFlag) {
             initData();
             sInitFlag = true;
@@ -138,10 +165,26 @@ public class SlaveService extends Service {
     }
 
     private void initData(){
+//        //是否设置为测试地址
+//        String fileName = "server";
+//        String key = "test_url";
+//        File file = new File("/data/data/" + getPackageName() + "/shared_prefs/server.xml");
+//        boolean isTestServer = false;
+//
+//        if (file != null && file.exists()) {
+//            isTestServer = getSharedPreferences(fileName, Context.MODE_PRIVATE).getBoolean(key, false);
+//        } else {
+//            getSharedPreferences(fileName, Context.MODE_PRIVATE).edit().putBoolean(key, false).commit();
+//        }
+//        Constant.setTestServer(isTestServer);
+
         //设定海报的下载路径文件夹
         Constant.setCachedPosterDir(new File("/data/misc/posters"));
         //后裔广告的下载路径
         Constant.setHouyiAdDir(new File("/data/misc/baofengtv/houyi_ad"));
+
+        if( mFUIVersion == 1 )
+            bindGameService();
 
         //2分钟后开始下载网络海报
         Trace.Debug("###will download posters after 2mins");
@@ -189,6 +232,8 @@ public class SlaveService extends Service {
     @Override
     public void onDestroy(){
         Trace.Debug("###onDestroy()");
+        if(mFUIVersion == 1)
+            unbindService(mGameServiceConn);
         sInstance = null;
         super.onDestroy();
         MobclickAgent.onPause(this);
@@ -215,10 +260,30 @@ public class SlaveService extends Service {
         }
         mWorkThread = new Thread(){
             public void run(){
+                //如有必要则解绑广播
+                SupporterReceiver.reportWifi(getApplicationContext());
+
+                if(mFUIVersion == 1){
+                    if(Utils.isPackageInstalled(getApplicationContext(),Constant.LAUNCHER_10_PACKAGE)) {
+                        //1.下载所有海报
+                        ContentManager.readPostersFromDB2CachedMap(getApplicationContext());
+                        //2.1各个业务执行解析海报url、下载海报、建立数据库对应关系
+                        BftvBusiness.getInstance(getApplicationContext()).getTaskRunnable().run();
+                        //2.2
+                        GameBusiness.getInstance(getApplicationContext()).getTaskRunnable().run();
+                        ContentManager.clearCachedPostersMap();
+                        try {
+                            Thread.sleep(10000);
+                        } catch (InterruptedException e) {
+                        }
+                    }
+                }
+
                 //4自启动
                 AutoRunBusiness.getInstance(getApplicationContext()).getTaskRunnable().run();
 
                 //5.下载开机动画（视频）
+                //改从后裔系统下载，FUI1.0&3.0都改
                 Trace.Debug("###now deal with boot animation business");
                 BootAnimBusiness.getInstance(getApplicationContext()).getTaskRunnable().run();
 
@@ -229,6 +294,11 @@ public class SlaveService extends Service {
             }
         };
         mWorkThread.start();
+    }
+
+    public void notifyDownloadPostersCompleted(){
+        Trace.Debug("###send msg MSG_POSTERS_FINISHED");
+        mHandler.sendEmptyMessage(MSG_POSTERS_FINISHED);
     }
 
     //友盟统计
@@ -281,7 +351,412 @@ public class SlaveService extends Service {
         IntentFilter filter = new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION);
         registerReceiver(mNetworkReceiver, filter);
     }
+    public IEgameService getRemoteGameService(){
+        if( (mFUIVersion > 1) ||
+                !Utils.isPackageInstalled(getApplicationContext(), Constant.LAUNCHER_10_PACKAGE)){
+            return null;
+        }
+        if(mGameService == null){
+            bindGameService();
+        }
+        return mGameService;
+    }
+    //绑定爱游戏Service，监控游戏apk的卸载和安装
+    private void bindGameService() {
+        Trace.Debug("###bindGameService()");
+        Intent intent = new Intent();
+        intent.setPackage("com.egame.tv");
+        intent.setAction("com.egame.tv.services.aidl.IEgameService");
+        bindService(intent, mGameServiceConn, Context.BIND_AUTO_CREATE);
+    }
 
+    private ServiceConnection mGameServiceConn = new ServiceConnection() {
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            mGameService = null;
+        }
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            Trace.Debug("###onServiceConnected");
+            mGameService = IEgameService.Stub.asInterface(service);
+            if (mGameService != null) {
+                try {
+                    List<EgameInstallAppBean> gameList = (List<EgameInstallAppBean>) mGameService
+                            .getValue();
+                    if (gameList != null) {
+                        int size = gameList.size();
+                        Trace.Debug("###installed games size=" + size);
+                        for (int i = 0; i < size; i++) {
+                            Trace.Debug( "###" + i + ":"
+                                    + gameList.get(i).toString());
+                        }
+                        GameBusiness.getInstance(getApplicationContext()).refreshInstallGameListAndSendBroadcast(gameList);
+                    }else{
+                        Trace.Warn("###gamelist is null");
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }else {
+                Trace.Warn("###mGameService is null");
+            }
+        }
+    };
+
+    private ISupporterService.Stub mBinder = new ISupporterService.Stub() {
+        @Override
+        public void launchBFTVById(int businessId){
+            Trace.Debug("###launchBFTVById(" + businessId + ")");
+            PosterEntry entry = ContentManager.readPosterFromDB(getApplicationContext(), businessId);
+            if(entry.businessId == businessId){
+                launchBFTV(entry);
+            }
+            else if(entry.businessId == 0){
+                Trace.Warn("###query PosterEntry by businessId failed and launchDefault");
+                entry.businessId = businessId;
+                launchBFTVDefault(entry);
+            }else{
+                Trace.Warn("###unknown businessId");
+            }
+        }
+
+        @Override
+        public void launchBFTV(PosterEntry entry){
+            Trace.Debug("###launchBFTV()");
+
+            Trace.Debug("###entry.intent = " + entry.intent);
+            if(TextUtils.isEmpty(entry.intent)){
+                launchBFTVDefault(entry);
+            }else if(entry.intent.startsWith("http")){
+                //WebViewUtils.loadUrlByBrowser(getApplicationContext(), entry.intent);
+                WebViewUtils.getInstance(getApplicationContext()).loadUrl(entry.intent);
+            }else{
+                try {
+                    Trace.Debug("###parseAndLaunchIntent start");
+                    //解析服务端配置的下一跳动作，解析成功则跳转
+                    IntentUtils.parseAndLaunchIntent(getApplicationContext(), entry.intent);
+                    Trace.Debug("###parseAndLaunchIntent end");
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    Trace.Debug("###now launchBFTV by default.");
+                    launchBFTVDefault(entry);
+                }
+            }
+        }
+
+        private static final String PACKAGE_NAME = "com.baofeng.bftv";
+        private static final String ENTRANCE_NAME = "com.baofeng.bftv.activity.MainActivity";
+        private static final String EXTRA_NAME = "Activity";
+        private void launchBFTVDefault(PosterEntry entry){
+            Trace.Debug("###launchBFTVDefault(" + entry.businessId + ")");
+            try{
+                Intent intent = new Intent();
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                //Bundle bundle = new Bundle();
+                ComponentName component;
+                switch (entry.businessId){
+                    case Constant.ID_TURN_PLAY:
+                        Trace.Debug("###start package com.baofeng.bftv");
+                        Trace.Debug("###start bftv lunbo. LivePlayerActivity");
+                        component = new ComponentName(PACKAGE_NAME, ENTRANCE_NAME);
+                        intent.setComponent(component);
+                        intent.putExtra(EXTRA_NAME, "com.baofeng.bftv.activity.LivePlayerActivity");
+                        startActivity(intent);
+                        break;
+                    case Constant.ID_QUICK_PLAY:
+                        //速播
+                        component = new ComponentName(PACKAGE_NAME, ENTRANCE_NAME);
+                        intent.setComponent(component);
+                        intent.putExtra(EXTRA_NAME, "com.baofeng.bftv.activity.launcher.SuboActivity");
+                        startActivity(intent);
+                        break;
+                    case Constant.ID_FILM_LIBRARY:
+                        //影视库
+                        component = new ComponentName(PACKAGE_NAME, ENTRANCE_NAME);
+                        intent.setComponent(component);
+                        startActivity(intent);
+                        break;
+                    case Constant.ID_FILM_CHILDREN:
+                        //少儿
+                        component = new ComponentName(PACKAGE_NAME, ENTRANCE_NAME);
+                        intent.setComponent(component);
+                        intent.putExtra(EXTRA_NAME, "com.baofeng.bftv.activity.launcher.ChildrenVideoListActivity");
+                        startActivity(intent);
+                        break;
+                    case Constant.ID_SPECIAL_SECOND_SUB1:
+                        //二级专场1：每日播报
+                        component = new ComponentName(PACKAGE_NAME, ENTRANCE_NAME);
+                        intent.setComponent(component);
+                        intent.putExtra(EXTRA_NAME, "com.baofeng.bftv.activity.launcher.WeeklyVideoActivity");
+                        startActivity(intent);
+                        break;
+                    case Constant.ID_SPECIAL_SECOND_SUB2:
+                        //二级专场2：奇异果VIP
+                        component = new ComponentName(PACKAGE_NAME, ENTRANCE_NAME);
+                        intent.setComponent(component);
+                        intent.putExtra(EXTRA_NAME, "com.baofeng.bftv.activity.launcher.VIPVideoListActivity");
+                        startActivity(intent);
+                        break;
+                    case Constant.ID_SPECIAL_SECOND_SUB3:
+                        //二级专场3：悦生活
+                        component = new ComponentName(PACKAGE_NAME, ENTRANCE_NAME);
+                        intent.setComponent(component);
+                        intent.putExtra(EXTRA_NAME, "com.baofeng.bftv.activity.launcher.FourKSubjectActivity");
+                        startActivity(intent);
+                        break;
+                    case Constant.ID_SPECIAL_SECOND_SUB4:
+                        //二级专场4：4K杜比
+                        component = new ComponentName(PACKAGE_NAME, ENTRANCE_NAME);
+                        intent.setComponent(component);
+                        intent.putExtra(EXTRA_NAME, "com.baofeng.bftv.activity.launcher.DolbySubjectActivity");
+                        startActivity(intent);
+                        break;
+                    case Constant.ID_SPECIAL_SECOND_SUB5:
+                        //二级专场5：奥飞全明星
+                        component = new ComponentName(PACKAGE_NAME, ENTRANCE_NAME);
+                        intent.setComponent(component);
+                        intent.putExtra(EXTRA_NAME, "com.baofeng.bftv.activity.launcher.AlphaAnimSubjectActivity");
+                        startActivity(intent);
+                        break;
+                    case Constant.ID_SPECIAL_SECOND_SUB6:
+                        //二级专场6：极清MV
+                        Trace.Debug("###start vip");
+                        component = new ComponentName(PACKAGE_NAME, ENTRANCE_NAME);
+                        intent.setComponent(component);
+                        intent.putExtra(EXTRA_NAME, "com.baofeng.bftv.activity.launcher.MVSubjectActivity");
+                        startActivity(intent);
+                        break;
+                    case Constant.ID_SPORT:
+                        startActivityByJson("json_sport.txt");
+                        break;
+                    case Constant.ID_SPORT_SUB1:
+                        startActivityByJson("json_sport_sub1.txt");
+                        break;
+                    case Constant.ID_SPORT_SUB2:
+                        startActivityByJson("json_sport_sub2.txt");
+                        break;
+                    case Constant.ID_SHOPPING:
+                        startActivityByJson("json_readtv.txt");
+                        break;
+                    case Constant.ID_SHOPPING_SUB1:
+                        startActivityByJson("json_readtv_sub1.txt");
+                        break;
+                    case Constant.ID_SHOPPING_SUB2:
+                        startActivityByJson("json_readtv_sub2.txt");
+                        break;
+                    default:
+                        break;
+                }
+            }catch (Exception e){
+                e.printStackTrace();
+            }
+        }
+
+        private void startActivityByJson(String fileName){
+            String jsonStr = "";
+            try {
+                InputStream is = getAssets().open(fileName);
+                int size = is.available();
+                byte[] buffer = new byte[size];
+                is.read(buffer);
+                is.close();
+                jsonStr = new String(buffer, "utf8");
+                Trace.Debug("###jsonStr=" + jsonStr);
+
+                if( !TextUtils.isEmpty(jsonStr) ){
+                    IntentUtils.parseAndLaunchIntent(getApplicationContext(), jsonStr);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        @Override
+        public List<GameEntry> requestGamesInfo() throws RemoteException {
+            Trace.Debug("###requestGamesInfo");
+            int size = GameBusiness.getInstallGameList().size();
+            if( size >= 3) {
+                List<GameEntry> list = new ArrayList<GameEntry>();
+                GameEntry game1 = new GameEntry();
+                game1.businessId = Constant.ID_GAME_INSTALLED_SUB1;
+                game1.type = 0;
+                game1.packageName = GameBusiness.getInstallGameList().get(0).getPackageName();
+                game1.iconPath = Constant.CACHED_DIR + game1.packageName + ".png";
+                list.add(game1);
+
+                GameEntry game2 = new GameEntry();
+                game2.businessId = Constant.ID_GAME_INSTALLED_SUB2;
+                game2.type = 0;
+                game2.packageName = GameBusiness.getInstallGameList().get(1).getPackageName();
+                game2.iconPath = Constant.CACHED_DIR + game1.packageName + ".png";
+                list.add(game2);
+
+                GameEntry game3 = new GameEntry();
+                game3.businessId = Constant.ID_GAME_INSTALLED_SUB3;
+                game3.type = 0;
+                game3.packageName = GameBusiness.getInstallGameList().get(2).getPackageName();
+                game3.iconPath = Constant.CACHED_DIR + game1.packageName + ".png";
+                list.add(game3);
+
+                return list;
+            }else{
+                //发广播
+                GameBusiness.getInstance(getApplicationContext())
+                        .refreshInstallGameListAndSendBroadcast(GameBusiness.getInstallGameList());
+            }
+            return null;
+        }
+
+        //跳转至游戏应用首页
+        @Override
+        public void launchGameApp()throws RemoteException {
+            Trace.Debug("###launchGameApp");
+            //爱游戏
+            launchAppByPackageName("com.egame.tv");
+        }
+
+        //进入我的游戏（已安装）
+        @Override
+        public void launchMyGames()throws RemoteException {
+            Trace.Debug("###launchMyGames");
+            Intent intent = new Intent();
+            Bundle bundle = new Bundle();
+            intent.setClassName("com.egame.tv",
+                    "com.egame.tv.activitys.PreLancherActivity");
+            //recordType==4表示进入已安装的游戏列表页
+            bundle.putString("RECOMMEND", "{recordType:'4',gameid:'',aid:'',linkurl:'',downloadfrom:'',actioncode:'',name:''}");
+            intent.putExtra("openFlag", 1);
+            intent.setAction("android.intent.action.VIEW");
+            intent.putExtras(bundle);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            intent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            startActivity(intent);
+        }
+
+        @Override
+        public void launchOneGameApp(GameEntry game) throws RemoteException {
+            Trace.Debug("###launchOneGameApp");
+            if(game.businessId >= Constant.ID_GAME_INSTALLED_SUB1 &&
+                    game.businessId <= Constant.ID_GAME_INSTALLED_SUB3){
+                //根据包名启动已安装的游戏
+                launchAppByPackageName(game.packageName);
+            }
+            else if(game.businessId >= Constant.ID_GAME_RECOMMEND_SUB1 &&
+                    game.businessId <= Constant.ID_GAME_RECOMMEND_SUB3){
+                //隐式启动推荐游戏，进入推荐游戏的详情页
+                Intent intent = new Intent();
+                Bundle bundle = new Bundle();
+                intent.setClassName("com.egame.tv", "com.egame.tv.activitys.PreLancherActivity");
+                bundle.putString("RECOMMEND", game.intent);
+                //"{recordType:'1',gameid:'730011',aid:'9285',linkurl:'',downloadfrom:'1',actioncode:'1'}"
+                intent.setAction("android.intent.action.VIEW");
+                intent.putExtras(bundle);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                startActivity(intent);
+            }
+        }
+
+        @Override
+        public void launchMusicApp() throws RemoteException {
+            Trace.Debug("###launchMusicApp");
+            launchAppByPackageName("com.baofengtv.hifimusic");
+        }
+
+        @Override
+        public void launchMyMusics() throws RemoteException {
+            Trace.Debug("###launchMyMusics");
+            Intent intent = new Intent();
+            ComponentName cn = new ComponentName("com.baofengtv.hifimusic",
+                    "com.tongyong.xxbox.activity.MyMusicActivity");
+            intent.setComponent(cn);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            intent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            startActivity(intent);
+        }
+
+        @Override
+        public void launchRandomMusics() throws RemoteException {
+            Trace.Debug("###launchRandomMusics");
+            //改用虾米的随便听听接口
+            Uri uri = Uri.parse("xiami://music/recommend");
+            Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            intent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            startActivity(intent);
+        }
+
+        @Override
+        public void launchMarketApp() throws RemoteException {
+            Trace.Debug("###launchMarketApp");
+            launchAppByPackageName("com.baofeng.dangbeimarket");
+        }
+
+        @Override
+        public void launchTurnPlayApp() throws RemoteException {
+            Trace.Debug("###launchTurnPlayApp");
+            launchBFTVById(Constant.ID_TURN_PLAY);
+        }
+
+        @Override
+        public void launchAlbumApp() throws RemoteException{
+            Trace.Debug("###launchAlbumApp()。nothing to do");
+        }
+
+        @Override
+        public PosterEntry queryPosterById(int businessId) throws RemoteException {
+            Trace.Debug("###queryPosterById");
+            return ContentManager.readPosterFromDB(getApplicationContext(), businessId);
+        }
+
+        @Override
+        public List<PosterEntry> queryPosters() throws RemoteException {
+            Trace.Debug("###queryPosters");
+            return ContentManager.readPosterFromDB(getApplicationContext());
+        }
+
+        private void launchAppByPackageName(String packageName) {
+            // 通过包名获取此APP详细信息，包括Activities、services、versioncode、name等等
+            PackageInfo packageinfo = null;
+            try {
+                packageinfo = getPackageManager().getPackageInfo(packageName, 0);
+            } catch (PackageManager.NameNotFoundException e) {
+                e.printStackTrace();
+            }
+            if (packageinfo == null) {
+                return;
+            }
+
+            Intent resolveIntent = new Intent(Intent.ACTION_MAIN, null);
+            resolveIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+            resolveIntent.setPackage(packageinfo.packageName);
+
+            List<ResolveInfo> resolveInfoList = getPackageManager()
+                    .queryIntentActivities(resolveIntent, 0);
+
+            Iterator<ResolveInfo> it = resolveInfoList.iterator();
+            if(it.hasNext()){
+                ResolveInfo resolveinfo = it.next();
+                if (resolveinfo != null) {
+                    String pkgName = resolveinfo.activityInfo.packageName;
+                    String className = resolveinfo.activityInfo.name;
+                    Intent intent = new Intent(Intent.ACTION_MAIN);
+                    intent.addCategory(Intent.CATEGORY_LAUNCHER);
+
+                    ComponentName cn = new ComponentName(pkgName, className);
+                    intent.setComponent(cn);
+                    if(pkgName.equals("com.baofeng.dangbeimarket")){
+                        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    }
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                    startActivity(intent);
+                }
+            }
+
+        }
+    };
 
     private static final int TYRANT_STATE_CLOSE = 0;
     private static final int TYRANT_STATE_HINT = 1;
@@ -345,14 +820,38 @@ public class SlaveService extends Service {
 
             //一连即播开关
             private int getTyrantState(){
-                //com.baofengtv.middleware.server.BFTVSettingManager sm
-                //        = com.baofengtv.middleware.server.BFTVSettingManager.getInstance(getApplicationContext());
-                //return sm.getTyrantValue();
-                try {
-                    return BFTVCommonManager.getInstance(getApplicationContext()).getTyrantValue();
-                }catch (Throwable e){
-                    return TYRANT_STATE_CLOSE;
+                if(mFUIVersion >= 3){
+                    //com.baofengtv.middleware.server.BFTVSettingManager sm
+                    //        = com.baofengtv.middleware.server.BFTVSettingManager.getInstance(getApplicationContext());
+                    //return sm.getTyrantValue();
+                    try {
+                        return BFTVCommonManager.getInstance(getApplicationContext()).getTyrantValue();
+                    }catch (Throwable e){
+                        return TYRANT_STATE_CLOSE;
+                    }
                 }
+                try {
+                    //读取shared_pref的keyword已经被系统设置app更改，注意推送至旧系统平台的兼容问题
+                    SharedPreferences sharedPref = getTargetContext().getSharedPreferences("tvplayer_prefs",
+                            Context.MODE_WORLD_READABLE | Context.MODE_MULTI_PROCESS);
+                    //return sharedPref.getInt("tyrant_state", TYRANT_STATE_HINT);
+                    //如果BFTVSupporter推送到旧平台上使用以下代码
+                    int systemSettingVersionCode = -1;
+                    PackageInfo pkgInfo = SlaveService.this.getPackageManager().getPackageInfo("com.baofengtv.settings", 0);
+                    systemSettingVersionCode = pkgInfo.versionCode;
+                    if(systemSettingVersionCode < 250){
+                        boolean ret = sharedPref.getBoolean("tyrant_support", false);
+                        if(ret)
+                            return TYRANT_STATE_OPEN;
+                        else
+                            return TYRANT_STATE_HINT;
+                    }else{
+                        return sharedPref.getInt("tyrant_state", TYRANT_STATE_HINT);
+                    }
+                }catch (Exception e){
+                    e.printStackTrace();
+                }
+                return TYRANT_STATE_CLOSE;
             }
 
             private Context getTargetContext() throws PackageManager.NameNotFoundException {

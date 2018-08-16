@@ -6,15 +6,21 @@ import android.content.Context;
 import android.content.Intent;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+import android.net.TrafficStats;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.Message;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.KeyEvent;
 
 import com.baofengtv.middleware.tv.BFTVCommonManager;
 import com.baofengtv.middleware.tv.BFTVSoundManager;
+import com.baofengtv.supporter.net.OkHttpUtils;
 
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
@@ -22,22 +28,27 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.URL;
+import java.net.URLConnection;
+import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * @author LiLiang
  * @version 1.0
  * @title 类的名称
  * @description 上报开机音量、环绕箱插拔事件监听；
- *                  上报外脑使用情况（版本，软硬采，是否插入正确）；
- *                  上报无线网络使用情况（强度、信道、scan个数、路由型号）；
- *                  上报遥控按键使用情况；
+ * 上报外脑使用情况（版本，软硬采，是否插入正确）；
+ * 上报无线网络使用情况（强度、信道、scan个数、路由型号）；
+ * 上报遥控按键使用情况；
  * @company 暴风TV
  * @created 2018/2/1 19:49
  * @changeRecord [修改记录] <br/>
@@ -49,8 +60,13 @@ public class SupporterReceiver extends BroadcastReceiver {
 
     private Thread mMonitorThread;
 
+    private static DecimalFormat mDecimalFormat = new DecimalFormat("0.0");
+
+    private Context mContext;
+
     @Override
     public void onReceive(Context context, Intent intent) {
+        mContext = context.getApplicationContext();
         String action = intent.getAction();
         Trace.Debug("get broadcast " + action);
         //1.开机广播
@@ -58,7 +74,6 @@ public class SupporterReceiver extends BroadcastReceiver {
             Intent service = new Intent(context, SlaveService.class);
             context.startService(service);
 
-            final Context appContext = context.getApplicationContext();
             mMonitorThread = new Thread() {
                 public void run() {
                     try {
@@ -66,11 +81,13 @@ public class SupporterReceiver extends BroadcastReceiver {
                     } catch (InterruptedException e) {
                     }
                     //开机统计-系统开机音量
-                    reportVolumeWhenBoot(appContext);
+                    reportVolumeWhenBoot(mContext);
                     //开机统计-外脑连接状态
-                    reportAIMicWhenBoot(appContext);
+                    reportAIMicWhenBoot(mContext);
+                    //统计rom版本
+                    reportROMInfo(mContext);
                     //按键事件统计
-                    reportKeyEvent(appContext);
+                    reportKeyEvent(mContext);
                 }
             };
             mMonitorThread.start();
@@ -118,6 +135,24 @@ public class SupporterReceiver extends BroadcastReceiver {
                 umengMap.put("platform", "connected-" + Utils.getCurPlatform(context));
                 SlaveService.onEvent(UMengUtils.EVENT_STATUS_BLUETOOTH_REMOTE, umengMap);
             }
+        } else if (action.equals("baofengtv.action.NO_OPERATION_START_APP")) {
+            //执行测速
+            File file = new File("/data/data/com.baofengtv.supporter/cache/test_speed");
+            boolean testSpeed = !file.exists();
+            Trace.Debug("need test speed ? " + testSpeed);
+            if (testSpeed) {
+                new Thread() {
+                    public void run() {
+                        try {
+                            Thread.sleep(5000);
+                        } catch (InterruptedException e) {
+                        }
+                        reportPing();
+                        reportNetworkSpeed();
+                    }
+                }.start();
+            }
+
         }
     }
 
@@ -190,6 +225,19 @@ public class SupporterReceiver extends BroadcastReceiver {
 
     public static void reportWifi(Context context) {
         Trace.Debug("reportWifi()");
+
+        ConnectivityManager cm = (ConnectivityManager) context
+                .getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null)
+            return;
+        NetworkInfo networkInfo = cm.getActiveNetworkInfo();
+        if(networkInfo == null)
+            return;
+        int networkType = networkInfo.getType();
+        Trace.Debug("network type = " + networkType);
+        if(networkType != ConnectivityManager.TYPE_WIFI)
+            return;
+
         WifiManager wifiManager = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
         //wifi热点列表
         List<ScanResult> wifiList = wifiManager.getScanResults();
@@ -199,21 +247,36 @@ public class SupporterReceiver extends BroadcastReceiver {
 
         HashMap umengMap = new HashMap();
         umengMap.put("scan_counts", wifiList.size());
-
+        String bssid = wifiInfo.getBSSID();
+        if(bssid != null && bssid.length() > 8) {
+            umengMap.put("connected_bssid", bssid.substring(0,8));
+        }
         //查找已连接wifi信号强度
-        String ssid = wifiInfo.getSSID().replace("\"", "");
+        String connectedSSID = wifiInfo.getSSID().replace("\"", "");
         StringBuilder all_level = new StringBuilder("");
+        StringBuilder low_conn_detail = new StringBuilder("");
+        String type = "-2.4G";
         for (ScanResult scanResult : wifiList) {
             String ssid2 = scanResult.SSID.replace("\"", "");
-            //scanResult.level取值[-55, -100]
-            //转化到0-99分，分数越高代表越好
-            int calculateLevel = wifiManager.calculateSignalLevel(scanResult.level, 100);
-            all_level.append(String.valueOf(calculateLevel));
+            all_level.append("[" + String.valueOf(scanResult.level) + "|" +
+                    String.valueOf(getChannelByFrequency(scanResult.frequency)) + "]");
             all_level.append("#");
-            if (ssid.equals(ssid2)) {
-                Trace.Debug("calculate level = " + calculateLevel);
-                umengMap.put("connected_level", String.valueOf(calculateLevel));
-                umengMap.put("connected_channel", String.valueOf(getChannelByFrequency(scanResult.frequency)));
+            if (connectedSSID.equals(ssid2)) {
+                Trace.Debug("level = " + scanResult.level);
+                umengMap.put("connected_level", String.valueOf(scanResult.level));
+
+                int channel = getChannelByFrequency(scanResult.frequency);
+                umengMap.put("connected_channel", String.valueOf(channel));
+                if (scanResult.frequency > 5000)
+                    type = "-5G";
+                if(scanResult.level <= -70){
+                    low_conn_detail.append(Utils.getSerialNumber(context) + "|" + scanResult.level);
+                    String var = new String(low_conn_detail);
+                    umengMap.put("low_connected_uuid", var);
+                    low_conn_detail.append("|" + channel);
+                }
+                umengMap.put("connected_link_speed_level",
+                        String.valueOf(wifiInfo.getLinkSpeed()) + "|" + type + "|" +  String.valueOf(scanResult.level));
             }
         }
 
@@ -221,13 +284,192 @@ public class SupporterReceiver extends BroadcastReceiver {
         String filePath = wgetHost(host, context);
         try {
             Thread.sleep(800);
-        }catch (Exception e){}
+        } catch (Exception e) {
+        }
         String wifiModel = parseFile(filePath);
         Trace.Debug("model = " + wifiModel);
         umengMap.put("model", wifiModel);
-
-        umengMap.put("all_level", all_level.toString());
+        umengMap.put("all_level_channel", all_level.toString());
+        umengMap.put("connected_link_speed", String.valueOf(wifiInfo.getLinkSpeed()));
+        if(low_conn_detail.length() > 0) {
+            low_conn_detail.append("|" + wifiModel + "|" + wifiInfo.getLinkSpeed() + "|" + type);
+            umengMap.put("low_connected_detail", low_conn_detail.toString());
+        }
         SlaveService.onEvent(UMengUtils.EVENT_STATUS_WIFI, umengMap);
+    }
+
+    private void reportKeyEvent(Context context) {
+        if (Utils.getCurPlatform(context).equals("MST_6A838"))
+            return;
+        Process process = null;
+        BufferedReader reader = null;
+        DataOutputStream os = null;
+        try {
+            String[] getLogArray = new String[]{"logcat", "-v", "time", "-s", "EventHub:I"};
+
+            process = Runtime.getRuntime().exec(getLogArray);//抓取当前的缓存日志
+            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line;
+            int index = -1;
+            String codeStr = "code=";
+            String valueStr = "value=";
+            String tmp1, value;
+            while ((line = reader.readLine()) != null) {
+                if (line.contains("vendor")) {
+                    if ((index = line.indexOf(codeStr)) > 0) {
+                        tmp1 = line.substring(index + 5);
+                        value = tmp1.substring(tmp1.indexOf(valueStr) + 6);
+                        if (value.equals("1")) {
+                            String code = tmp1.substring(0, tmp1.indexOf(','));
+                            if (code.equals("0") || code.equals("1")) {
+                                continue;
+                            }
+                            String androidCode = convert2AndroidKeyCode(code);
+                            if (androidCode == null) {
+                                //转换失败
+                                SlaveService.onEvent(UMengUtils.KEY_EVENT, Utils.curPlatform + line.substring(line.indexOf("vendor")));
+                            } else {
+                                SlaveService.onEvent(UMengUtils.KEY_EVENT, androidCode);
+                                //Trace.Debug("keycode = " + androidCode);
+                            }
+
+                        }
+                    }
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                if (os != null) {
+                    os.close();
+                }
+                if (reader != null) {
+                    reader.close();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            if (process != null) {
+                process.destroy();
+            }
+        }
+    }
+
+    //统计AIOS3.0以上版本
+    private void reportROMInfo(Context context) {
+        Trace.Debug("reportROMInfo()");
+        String version = Utils.getSystemVersion(context).toLowerCase();
+        HashMap umengMap = new HashMap();
+        String ret;
+        if (version.compareTo("v4.0") > 0) {
+            ret = "v4.+";
+        } else {
+            ret = "other";
+        }
+        umengMap.put("version", ret);
+        umengMap.put("platform@version", Utils.curPlatform + " " + ret);
+        SlaveService.onEvent(UMengUtils.EVENT_ROM_INFO, umengMap);
+    }
+
+    private int totalBytes = -1;
+    private boolean flag = true;
+
+    //网络测速
+    private void reportNetworkSpeed() {
+        Trace.Debug("reportNetworkSpeed()");
+        Map<String, String> params = new HashMap<String, String>();
+        params.put("method", "bftv.launcher.speed");
+        params.put("apptoken", "c5c7ade9e97cf3d9ecddda3566b003ad");
+        params.put("version", "2.0");
+        Map<String, String> resultMap = null;
+        String downloadUrl = null;
+        try {
+            resultMap = OkHttpUtils.doPost("http://ptbftv.gitv.tv/", params);
+            int stausCode = Integer.parseInt(resultMap.get("code"));
+            String content = resultMap.get("return");
+            int indexstart = content.indexOf("http");
+            int indexend = content.lastIndexOf("\"");
+            if (stausCode == 200 && indexstart != -1)
+                downloadUrl = content.substring(indexstart, indexend).replace("\\", "");
+            Trace.Debug("###statusCode=" + stausCode + " downloadurl  = " + downloadUrl + " " +
+                    "start" + indexstart);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        if (TextUtils.isEmpty(downloadUrl)) {
+            downloadUrl = "http://log.fengmi.tv/speed.mp4";
+        }
+
+        flag = true;
+        new CalculateSpeedThread().start();
+
+        URL url;
+        URLConnection connection;
+        final InputStream inStream;
+        try {
+            url = new URL(downloadUrl);
+            connection = url.openConnection();
+            inStream = connection.getInputStream();
+            totalBytes = connection.getContentLength();
+            int read = 0;
+            byte[] buf = new byte[4096];
+            while (read != -1 && flag) {
+                read = inStream.read(buf);
+                //Trace.Debug("read buffer " + read);
+            }
+            inStream.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void reportPing() {
+        Trace.Debug("reportPing()");
+        WifiManager wifiManager = (WifiManager) mContext.getSystemService(Context.WIFI_SERVICE);
+        String gateway = intToIp(wifiManager.getDhcpInfo().gateway);
+
+        try {
+            double delay1 = getPingDelay(gateway);
+            double delay2 = getPingDelay("www.baidu.com");
+            String delayStr1 = mDecimalFormat.format(delay1) + "ms";
+            String delayStr2 = mDecimalFormat.format(delay2) + "ms";
+            Trace.Debug("ping gateway delay " + delayStr1);
+            Trace.Debug("ping server delay " + delayStr2);
+
+            HashMap umengMap = new HashMap();
+            umengMap.put("ping_gateway", delayStr1);
+            umengMap.put("ping_server", delayStr2);
+            umengMap.put("ping_server_uuid", delayStr2 + " " + Utils.getSerialNumber(mContext));
+
+            SlaveService.onEvent(UMengUtils.EVENT_PING, umengMap);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private double getPingDelay(String host) throws IOException {
+        double delay = 0;
+        String delayStr;
+        Process p;
+        String key = "time=";
+        p = Runtime.getRuntime().exec("/system/bin/ping -c 5 " + host);
+        BufferedReader buf = new BufferedReader(new InputStreamReader(p.getInputStream()));
+        String str;
+        while ((str = buf.readLine()) != null) {
+            //Trace.Debug("line = " + str);
+            if (str.contains(key)) {
+                int i = str.indexOf(key);
+                int j = str.indexOf(" ", i);
+
+                delayStr = str.substring(i + 5, j);
+                //Trace.Debug("delay:" + delayStr);
+                delay += Double.parseDouble(delayStr);
+            }
+        }
+        return delay/5;
     }
 
     //统计上报外脑插入事件
@@ -373,68 +615,8 @@ public class SupporterReceiver extends BroadcastReceiver {
         context.sendBroadcast(intent);
     }
 
-    private void reportKeyEvent(Context context) {
-        if(Utils.getCurPlatform(context).equals("MST_6A838"))
-            return;
-        Process process = null;
-        BufferedReader reader = null;
-        DataOutputStream os = null;
-        try {
-            String[] getLogArray = new String[]{"logcat", "-v", "time", "-s", "EventHub:I"};
-
-            process = Runtime.getRuntime().exec(getLogArray);//抓取当前的缓存日志
-            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line;
-            int index = -1;
-            String codeStr = "code=";
-            String valueStr = "value=";
-            String tmp1, value;
-            while ((line = reader.readLine()) != null) {
-                if(line.contains("vendor")){
-                    if ((index = line.indexOf(codeStr)) > 0) {
-                        tmp1 = line.substring(index + 5);
-                        value = tmp1.substring(tmp1.indexOf(valueStr) + 6);
-                        if(value.equals("1")){
-                            String code = tmp1.substring(0, tmp1.indexOf(','));
-                            if(code.equals("0") || code.equals("1")){
-                                continue;
-                            }
-                            String androidCode = convert2AndroidKeyCode(code);
-                            if(androidCode == null){
-                                //转换失败
-                                SlaveService.onEvent(UMengUtils.KEY_EVENT, Utils.curPlatform + line.substring(line.indexOf("vendor")));
-                            }else {
-                                SlaveService.onEvent(UMengUtils.KEY_EVENT, androidCode);
-                                //Trace.Debug("keycode = " + androidCode);
-                            }
-
-                        }
-                    }
-                }
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            try {
-                if (os != null) {
-                    os.close();
-                }
-                if (reader != null) {
-                    reader.close();
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-            if (process != null) {
-                process.destroy();
-            }
-        }
-    }
-
-    private String convert2AndroidKeyCode(String code){
-        if(EventHubMap.containsKey(code)) {
+    private String convert2AndroidKeyCode(String code) {
+        if (EventHubMap.containsKey(code)) {
             int androidKeyCode = EventHubMap.get(code);
             return String.valueOf(androidKeyCode) + KeyNameMap.get(androidKeyCode);
         }
@@ -443,6 +625,7 @@ public class SupporterReceiver extends BroadcastReceiver {
 
     public static HashMap<String, Integer> EventHubMap;
     public static HashMap<Integer, String> KeyNameMap;
+
     static {
         EventHubMap = new HashMap<>();
         EventHubMap.put("105", KeyEvent.KEYCODE_DPAD_LEFT);
@@ -494,7 +677,9 @@ public class SupporterReceiver extends BroadcastReceiver {
         KeyNameMap.put(67, "调焦-键");
         KeyNameMap.put(68, "调焦+键");
         KeyNameMap.put(KeyEvent.KEYCODE_POWER, "待机键");
-    } ;
+    }
+
+    ;
 
     /**
      * 根据频率获得信道
@@ -503,94 +688,34 @@ public class SupporterReceiver extends BroadcastReceiver {
      * @return
      */
     public static int getChannelByFrequency(int frequency) {
-        int channel = -1;
-        switch (frequency) {
-            case 2412:
-                channel = 1;
-                break;
-            case 2417:
-                channel = 2;
-                break;
-            case 2422:
-                channel = 3;
-                break;
-            case 2427:
-                channel = 4;
-                break;
-            case 2432:
-                channel = 5;
-                break;
-            case 2437:
-                channel = 6;
-                break;
-            case 2442:
-                channel = 7;
-                break;
-            case 2447:
-                channel = 8;
-                break;
-            case 2452:
-                channel = 9;
-                break;
-            case 2457:
-                channel = 10;
-                break;
-            case 2462:
-                channel = 11;
-                break;
-            case 2467:
-                channel = 12;
-                break;
-            case 2472:
-                channel = 13;
-                break;
-            case 2484:
-                channel = 14;
-                break;
-            case 5745:
-                channel = 149;
-                break;
-            case 5765:
-                channel = 153;
-                break;
-            case 5785:
-                channel = 157;
-                break;
-            case 5805:
-                channel = 161;
-                break;
-            case 5825:
-                channel = 165;
-                break;
-        }
-        return channel;
+        return frequency > 5000 ? (frequency - 5000) / 5 : (frequency - 2407) / 5;
     }
 
     /**
      * 获取路由器设备信息
      *
-     * @param host    要连接的域名
+     * @param host 要连接的域名
      */
-    private static String wgetHost(String host,Context context) {
+    private static String wgetHost(String host, Context context) {
         Trace.Debug("wget_host=" + host);
 //        host = "172.19.8.12";
         BufferedReader in = null;
         Runtime r = Runtime.getRuntime();
         String path = context.getCacheDir().getAbsolutePath();
-        if(!path.endsWith("/")){
+        if (!path.endsWith("/")) {
             path = context.getCacheDir() + "/index.txt";
-        }else {
+        } else {
             path = context.getCacheDir() + "index.txt";
         }
         //Trace.Debug("wget_host =" + host + " path = " + path);
         File file = new File(path);
-        if(file.exists()){
+        if (file.exists()) {
             file.delete();
         }
         String pingCommand;
-        if(BFTVCommonManager.getInstance(context).getPlatform().contains("AML")) {
+        if (BFTVCommonManager.getInstance(context).getPlatform().contains("AML")) {
             pingCommand = "wget http://" + host + " -O " + path;
-        }else{
+        } else {
             pingCommand = "busybox wget http://" + host + " -O " + path;
         }
 
@@ -608,29 +733,29 @@ public class SupporterReceiver extends BroadcastReceiver {
     /**
      * 获取路由器设备信息
      *
-     * @param path    文件路径
+     * @param path 文件路径
      */
-    private static String parseFile(String path){
+    private static String parseFile(String path) {
         try {
             StringBuffer sb = new StringBuffer();
             File file = new File(path);
-            if(file.exists()) {
+            if (file.exists()) {
                 BufferedReader br = new BufferedReader(new FileReader(file));
                 String line = "";
                 while ((line = br.readLine()) != null) {
                     //Trace.Debug("parseFile = " + line);
-                    if(line.contains("<title>")){
+                    if (line.contains("<title>")) {
                         int start = line.indexOf("<title>");
                         int end = line.indexOf("</title>");
-                        if(start != -1 && end != -1 && (start+7) < end){
-                            return line.substring(start+7, end);
+                        if (start != -1 && end != -1 && (start + 7) < end) {
+                            return line.substring(start + 7, end);
                         }
                         return line;
                     }
                 }
                 br.close();
             }
-        }catch (IOException e){
+        } catch (IOException e) {
             e.printStackTrace();
             return "unknown. IOException";
         }
@@ -642,5 +767,63 @@ public class SupporterReceiver extends BroadcastReceiver {
                 + (0xFF & paramInt >> 16) + "." + (0xFF & paramInt >> 24);
     }
 
+    class CalculateSpeedThread extends Thread {
+        @Override
+        public void run() {
+            Trace.Debug("calculateSpeedThread run");
+            long sum;
+            int counter;
+            long cur_speed, ave_speed = 0, max_speed = 0;
+            try {
+                sum = 0;
+                counter = 0;
+                long recv = TrafficStats.getTotalRxBytes();
+                long recvStart = recv;
+                long start = System.currentTimeMillis();
+                long duration = 1000L;
+                while ((System.currentTimeMillis() - start) < 17000) {
+                    Thread.sleep(duration);
+                    counter++;
+                    long curRecv = TrafficStats.getTotalRxBytes();
+                    cur_speed = ((curRecv - recv) * 1000 / duration);
+                    if (cur_speed > max_speed) {
+                        max_speed = cur_speed;
+                    }
+                    sum += cur_speed;
+                    ave_speed = (sum / counter);
+                    recv = curRecv;
+                    if (totalBytes > 0 && (recv - recvStart) > totalBytes) {
+                        break;
+                    }
+                }
 
+                flag = false;
+                String maxStr, aveStr;
+                long max = (max_speed / 1024);
+                if (max > 1024) {
+                    maxStr = mDecimalFormat.format(max / 1024) + "MB/s";
+                } else {
+                    maxStr = max + "KB/s";
+                }
+
+                long ave = (ave_speed / 1024);
+                if (ave > 1024) {
+                    aveStr = mDecimalFormat.format(ave / 1024d) + "MB/s";
+                } else {
+                    aveStr = ave + "KB/s";
+                }
+
+                Trace.Debug("average:" + aveStr + "; max:" + maxStr);
+                HashMap umengMap = new HashMap();
+                umengMap.put("max_speed", maxStr);
+                umengMap.put("average_speed", aveStr);
+                SlaveService.onEvent(UMengUtils.EVENT_NETWORK_SPEED, umengMap);
+
+                File file = new File("/data/data/com.baofengtv.supporter/cache/test_speed");
+                file.createNewFile();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
 }
