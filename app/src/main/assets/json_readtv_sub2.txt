@@ -1,0 +1,3 @@
+{"content":{"launchType":"startActivity","intentType":"explicit","packageName":"readtv.ghs.tv","className":"readtv.ghs.tv.activity.ExportVideoActivity","extra":{"video_id":"353","exit_flag":"2"}},"uninstalledContent":{"launchType":"startActivity","intentType":"implicit","action":"com.dangbeimarket.activity.Detail","extra":{"url":"http://down.znds.com/apinew/view.php?id=5296","transfer":"com.baofengtv.supporter","package_name":"readtv.ghs.tv"}}}
+
+

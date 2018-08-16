@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.baofengtv.supporter"
+    android:sharedUserId="android.uid.system">
+    <uses-sdk
+        android:minSdkVersion="16"
+        android:targetSdkVersion="19" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.GET_TASKS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.SYSTEM_OVERLAY_WINDOW" />
+    <uses-permission android:name="android.permission.DELETE_PACKAGES" />
+    <uses-permission android:name="android.permission.PACKAGEUSAGESTATS" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.BLUETOOTH"/>
+
+    <!--下面这俩获得位置经纬度的权限-->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- 查询用户中心是否是vip -->
+    <uses-permission android:name="com.bftv.fui.usercenter.provider.permission.UserCenterContentProvider" />
+
+    <application
+        android:name=".SuppApplication"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name">
+        <activity
+            android:name=".TestPosterActivity"
+            android:label="@string/app_name"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:hardwareAccelerated="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <!--<category android:name="android.intent.category.LAUNCHER" />-->
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".SlaveService"
+            android:enabled="true"
+            android:exported="true" >
+            <intent-filter>
+                <action android:name="com.baofengtv.supporter.action.SUPPORTER_SERVICE"/>
+            </intent-filter>
+        </service>
+
+        <receiver android:name=".UploadLogReceiver">
+            <intent-filter>
+                <action android:name="baofengtv.action.UPLOAD_LOG"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- 开机自启动，及usb插拔监听 -->
+        <receiver android:name=".SupporterReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED"/>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"/>
+                <action android:name="android.bluetooth.input.profile.action.CONNECTION_STATE_CHANGED"/>
+            </intent-filter>
+        </receiver>
+
+        <!--<meta-data
+            android:name="UMENG_APPKEY"
+            android:value="55bddbe1e0f55a7f4e009b35" >
+        </meta-data>
+        <meta-data
+            android:name="UMENG_CHANNEL"
+            android:value="BFTV" >
+        </meta-data>-->
+
+        <meta-data
+            android:name="HOUYI_APPKEY"
+            android:value="2" /> <!-- 5小魔投 -->
+        <meta-data
+            android:name="HOUYI_CHANNEL"
+            android:value="BFTV" />
+    </application>
+
+</manifest>

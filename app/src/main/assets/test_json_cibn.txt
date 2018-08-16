@@ -1,0 +1,2 @@
+﻿{"content":{"launchType":"startActivity","intentType":"implicit","packageName":"com.cibn.tv","action":"android.intent.action.VIEW",
+"uri":"cibntv_yingshi://goto_tab?tabId=327&tabName=女子图鉴"},"uninstalledContent":{"launchType":"startActivity","intentType":"implicit","action":"com.dangbeimarket.activity.Detail","extra":{"url":"http://down.znds.com/dbapinew/view.php?id=5145","transfer":"com.baofengtv.launcher3d","package_name":"com.cibn.tv"}}}

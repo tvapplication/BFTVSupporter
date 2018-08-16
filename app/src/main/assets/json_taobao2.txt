@@ -1,0 +1,3 @@
+{"content":{"launchType":"startActivity","intentType":"explicit","packageName":"rca.rc.tvtaobao","className":"rca.rc.tvtaobao.activity.IndexPageActivity","extra":{"data":"{\"linkUrl\":\"/cms/campaigns/2015/campaign_special_list?list_id=57d2836b6e60a226276aaaf1&roomId=57de04a097ef6fec61003a1d\",\"taobaoUri\":\"tvtaobao://home?module=common&page=http://tvos.taobao.com/wow/yunos/act/bftvyure&from=bftv_gwp_baofengtv_1021&notshowloading=true&isbackhome=true\"}"}}}
+
+

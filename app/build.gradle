@@ -1,0 +1,68 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileSdkVersion 21
+    buildToolsVersion '27.0.3'
+
+    signingConfigs {
+        myConfig {
+            storeFile file("platform.keystore")
+            storePassword "baofengtv2015"
+            keyAlias "androidplatformkey"
+            keyPassword "baofengtv2015"
+        }
+    }
+
+    defaultConfig {
+        applicationId "com.baofengtv.supporter"
+        minSdkVersion 16
+        targetSdkVersion 21
+        versionCode 265
+        versionName "2.3"
+        signingConfig signingConfigs.myConfig
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.myConfig
+            debuggable true
+            jniDebuggable false
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            debuggable true
+            signingConfig signingConfigs.myConfig
+
+            android.applicationVariants.all { variant ->
+                variant.outputs.all {
+                    outputFileName = "BFTVSupporter-v${defaultConfig.versionName}.${defaultConfig.versionCode}.apk"
+                }
+            }
+        }
+    }
+    productFlavors {
+    }
+
+    
+    sourceSets.main {
+        //java.srcDir "src"
+        //res.srcDir "res"
+        jniLibs.srcDir "libs"
+        //assets.srcDir "assets"
+    }
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation 'com.squareup.okhttp3:okhttp:3.8.0'
+    implementation 'io.reactivex:rxjava:1.0.14'
+    implementation 'io.reactivex:rxandroid:1.0.1'
+    implementation 'com.squareup.retrofit2:adapter-rxjava:2.1.0'
+    implementation 'com.squareup.retrofit2:retrofit:2.1.0'
+    implementation 'com.squareup.retrofit2:converter-gson:2.1.0'
+    //compile 'com.android.support:appcompat-v7:22.2.0'
+    //compile 'com.github.wseemann:FFmpegMediaMetadataRetriever-armeabi-v7a:1.0.14'
+}

@@ -1,0 +1,92 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical" >
+
+    <Button
+        android:id="@+id/btn_get_screen_saver"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="测试酷喵世界杯跳转"
+        android:layout_marginLeft="50dp"
+        android:layout_marginTop="30dp"/>
+
+    <Button
+        android:id="@+id/btn_get_houyi_ad"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="获取开机广告HOUYI"
+        android:layout_marginLeft="50dp"
+        android:layout_marginTop="30dp"/>
+
+    <Button
+        android:id="@+id/btn_get_houyi_ad2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="获取HOUYI系统广告"
+        android:layout_marginLeft="50dp"
+        android:layout_marginTop="30dp"
+        />
+
+    <Button
+        android:id="@+id/btn_auto_run"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="自启动管理数据"
+        android:layout_marginLeft="50dp"
+        android:layout_marginTop="30dp"/>
+
+    <Button
+        android:id="@+id/btn_get_poster"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="获取网络海报及下载"
+        android:layout_marginLeft="50dp"
+        android:layout_marginTop="10dp"
+        android:visibility="gone"/>
+
+    <Button
+        android:id="@+id/btn_to_install_page"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="进入我的游戏页（已安装）"
+        android:layout_marginLeft="50dp"
+        android:layout_marginTop="10dp"/>
+
+    <Button
+        android:id="@+id/btn_get_recommend_games"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="获取推荐游戏列表"
+        android:layout_marginLeft="50dp"
+        android:layout_marginTop="10dp"
+        android:visibility="gone"/>
+
+    <Button
+        android:id="@+id/get_main_poster"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="获取launcher主要海报及下载"
+        android:layout_marginLeft="50dp"
+        android:layout_marginTop="10dp"
+        android:visibility="visible"/>
+
+    <Button
+        android:id="@+id/btn_start_webview"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="测试WebView跳转"
+        android:layout_marginLeft="50dp"
+        android:layout_marginTop="10dp"/>
+
+    <Button
+        android:id="@+id/btn_upload_log"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="上传日志"
+        android:layout_marginLeft="50dp"
+        android:layout_marginTop="10dp"/>
+
+</LinearLayout>
+

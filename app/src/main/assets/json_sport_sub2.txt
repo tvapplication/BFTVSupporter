@@ -1,0 +1,1 @@
+{"content":{"launchType":"startActivity","intentType":"explicit","packageName":"com.baofeng.bftv","className":"com.baofeng.bftv.activity.MainActivity","extra":{"Activity":"com.baofeng.bftv.activity.ShortVideoListActivity","CategoryId":14,"channel":"30"}}}
